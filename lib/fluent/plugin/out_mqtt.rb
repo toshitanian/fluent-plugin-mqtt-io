@@ -1,3 +1,4 @@
+require 'mqtt'
 require 'fluent/plugin/output'
 require 'fluent/event'
 require 'fluent/time'
@@ -18,9 +19,8 @@ module Fluent::Plugin
     desc 'Topic rewrite replacement string.'
     config_param :topic_rewrite_replacement, :string, default: nil
 
-    # parameterize raises_write_error to delegate write error to buffer mechanism
-    desc 'Raises exception without reconnect if set true'
-    config_param :raises_write_error, :bool, default: false
+    desc 'Tries to reconnect to MQTT after publishing fails if set true'
+    config_param :rescue_disconnection, :bool, default: false
 
     config_section :format do
       desc 'The format to publish'
@@ -149,11 +149,17 @@ module Fluent::Plugin
     def write(chunk)
       return if chunk.empty?
       chunk.each do |tag, time, record|
-        if @raises_write_error
-          publish(tag, time, record)
-        else
+        if @rescue_disconnection
           rescue_disconnection do
             publish(tag, time, record)
+          end
+        else
+          begin
+            publish(tag, time, record)
+          rescue MQTT::Exception => e
+            # return false to let buffer feature to backoff
+            log.warn "mqtt error which publishing, #{e.class},#{e.message}"
+            return false
           end
         end
       end
